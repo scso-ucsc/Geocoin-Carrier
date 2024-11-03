@@ -9,6 +9,7 @@ const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
+const cacheStorage: { [key: string]: { coinCount: number } } = {};
 let playerCoins = 0;
 
 //Creating Initial Location, Map, and Player
@@ -83,26 +84,56 @@ function spawnCache(i: number, j: number) {
     i,
     j,
   );
+  if (bounds === null) {
+    return;
+  }
+
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
+  const cacheKey = `${i},${j}`;
+  if (!cacheStorage[cacheKey]) {
+    const initialCoinCount = Math.floor(
+      luck([i, j, "initialValue"].toString()) * 100,
+    );
+    cacheStorage[cacheKey] = { coinCount: initialCoinCount };
+  }
+
   rect.bindPopup(() => {
-    let coinCount = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
+    let coinCount = cacheStorage[cacheKey].coinCount;
     const popUpDiv = document.createElement("div");
     popUpDiv.innerHTML =
-      `<div>Cache at "${i}, ${j}". Coins: <span id="value">${coinCount}</span>.</div><button id="collect">Collect</button>`;
+      `<div>Cache at "${i}, ${j}". Coins: <span id="value">${coinCount}</span>.</div><button id="collect">Collect</button><button id="deposit">Deposit</button>`;
     popUpDiv
       .querySelector<HTMLButtonElement>("#collect")!
       .addEventListener("click", () => {
-        coinCount -= 1;
-        popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinCount
-          .toString();
-        playerCoins += 1;
-        statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
+        if (coinCount > 0) {
+          coinCount -= 1;
+          popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+            coinCount.toString();
+          playerCoins += 1;
+          updatePlayerCacheStats(cacheKey, coinCount);
+        }
+      });
+    popUpDiv
+      .querySelector<HTMLButtonElement>("#deposit")!
+      .addEventListener("click", () => {
+        if (playerCoins > 0) {
+          coinCount += 1;
+          popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
+            coinCount.toString();
+          playerCoins -= 1;
+          updatePlayerCacheStats(cacheKey, coinCount);
+        }
       });
 
     return popUpDiv;
   });
+}
+
+function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
+  statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
+  cacheStorage[cacheKey].coinCount = coinCount;
 }
 
 function generateCaches(): void {
