@@ -22,6 +22,7 @@ const map = leaflet.map(document.getElementById("map")!, {
   zoomControl: false,
   scrollWheelZoom: false,
 });
+
 leaflet
   .tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -54,12 +55,6 @@ const cacheFlyweightFactory = (() => {
     const lat2 = latBase + (i + 1) * cacheProperties.tileDegrees;
     const long1 = longBase + j * cacheProperties.tileDegrees;
     const long2 = longBase + (j + 1) * cacheProperties.tileDegrees;
-
-    if (isNaN(lat1) || isNaN(lat2) || isNaN(long1) || isNaN(long1)) {
-      console.error(
-        `Invalid LatLng values: (${lat1}, ${long1}, ${lat2}, ${long2})`,
-      );
-    }
 
     const bounds = leaflet.latLngBounds([
       [lat1, long1],
