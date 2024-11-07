@@ -9,7 +9,9 @@ const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
-const cacheStorage: { [key: string]: { coinCount: number } } = {};
+const cacheStorage: {
+  [key: string]: { coinCount: number; coins: { serial: number }[] };
+} = {};
 let playerCoins = 0;
 
 //Creating Initial Location, Map, and Player
@@ -72,42 +74,60 @@ const cacheFlyweightFactory = (() => {
 })();
 
 //FUNCTIONS --------------------
-function spawnCache(i: number, j: number) {
-  const bounds = cacheFlyweightFactory.calculateBounds(
-    OAKES_CLASSROOM.lat,
-    OAKES_CLASSROOM.lng,
-    i,
-    j,
-  );
-  if (bounds === null) {
+function spawnCache(lat: number, long: number) {
+  const gridPosition = convertToGrid(lat, long);
+  const cacheKey = `${gridPosition.i},${gridPosition.j}`;
+
+  if (!cacheStorage[cacheKey]) {
+    const initialCoinCount = Math.floor(
+      luck([gridPosition.i, gridPosition.j, "initialValue"].toString()) * 10,
+    );
+    cacheStorage[cacheKey] = { coinCount: initialCoinCount, coins: [] };
+    for (let n = 0; n < initialCoinCount; n++) {
+      cacheStorage[cacheKey].coins.push({ serial: n });
+    }
+  }
+
+  const bounds = cacheFlyweightFactory.calculateBounds(lat, long, 0, 0);
+  if (bounds == null) {
     return;
   }
 
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  const cacheKey = `${i},${j}`;
-  if (!cacheStorage[cacheKey]) {
-    const initialCoinCount = Math.floor(
-      luck([i, j, "initialValue"].toString()) * 100,
-    );
-    cacheStorage[cacheKey] = { coinCount: initialCoinCount };
-  }
-
   rect.bindPopup(() => {
-    let coinCount = cacheStorage[cacheKey].coinCount;
+    const cache = cacheStorage[cacheKey];
+    let coinCount = cache.coinCount;
+
+    const updateCoinRepresentation = () => {
+      return cache.coins
+        .map((coin) => `${gridPosition.i}:${gridPosition.j}#${coin.serial}`)
+        .join(", ");
+    };
+
     const popUpDiv = document.createElement("div");
     popUpDiv.innerHTML =
-      `<div>Cache at "${i}, ${j}". Coins: <span id="value">${coinCount}</span>.</div><button id="collect">Collect</button><button id="deposit">Deposit</button>`;
+      `<div>Cache at <strong>"${gridPosition.i}, ${gridPosition.j}"</strong>. <strong><br>Coins: </strong><span id="value">${coinCount}</span>.
+    <strong><br><br>Coin Identifiers: </strong><br><span id="coinRepresentation">${updateCoinRepresentation()}</span></div>
+      <button id="collect">Collect</button>
+      <button id="deposit">Deposit</button>`;
     popUpDiv
       .querySelector<HTMLButtonElement>("#collect")!
       .addEventListener("click", () => {
         if (coinCount > 0) {
           coinCount -= 1;
+          const collectedCoin = cache.coins.pop();
           popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinCount.toString();
+          popUpDiv.querySelector<HTMLSpanElement>(
+            "#coinRepresentation",
+          )!.innerHTML = updateCoinRepresentation();
           playerCoins += 1;
           updatePlayerCacheStats(cacheKey, coinCount);
+          console.log(
+            `Collected coin: ${gridPosition.i}:${gridPosition.j}#${collectedCoin?.serial}`,
+          );
         }
       });
     popUpDiv
@@ -115,10 +135,20 @@ function spawnCache(i: number, j: number) {
       .addEventListener("click", () => {
         if (playerCoins > 0) {
           coinCount += 1;
+          playerCoins -= 1;
+          const newSerialValue = cache.coins.length > 0
+            ? cache.coins[cache.coins.length - 1].serial + 1
+            : 0;
+          cache.coins.push({ serial: newSerialValue });
           popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinCount.toString();
-          playerCoins -= 1;
+          popUpDiv.querySelector<HTMLSpanElement>(
+            "#coinRepresentation",
+          )!.innerHTML = updateCoinRepresentation();
           updatePlayerCacheStats(cacheKey, coinCount);
+          console.log(
+            `Deposited coin: ${gridPosition.i}:${gridPosition.j}#${newSerialValue}`,
+          );
         }
       });
 
@@ -127,18 +157,30 @@ function spawnCache(i: number, j: number) {
 }
 
 function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
-  statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
   cacheStorage[cacheKey].coinCount = coinCount;
+  statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
 }
 
 function generateCaches(): void {
+  const baseLat = OAKES_CLASSROOM.lat;
+  const baseLong = OAKES_CLASSROOM.lng;
+
   for (let i = -NEIGHBORHOOD_SIZE; i <= NEIGHBORHOOD_SIZE; i++) {
     for (let j = -NEIGHBORHOOD_SIZE; j <= NEIGHBORHOOD_SIZE; j++) {
       if (cacheFlyweightFactory.shouldSpawnCache(i, j)) {
-        spawnCache(i, j);
+        const lat = baseLat + i * TILE_DEGREES;
+        const long = baseLong + j * TILE_DEGREES;
+        spawnCache(lat, long);
       }
     }
   }
+}
+
+function convertToGrid(lat: number, long: number) {
+  const scaleFactor = 10000;
+  const i = Math.floor(lat * scaleFactor);
+  const j = Math.floor(long * scaleFactor);
+  return { i, j };
 }
 
 //MAIN FUNCTION CALLS
