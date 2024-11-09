@@ -132,6 +132,10 @@ function addGeoLocationButton(): void {
   }
 }
 
+function addResetButton(): void {
+  document.getElementById("reset")!.addEventListener("click", resetGameState);
+}
+
 function initializePath(initialPosition: leaflet.LatLng): void {
   playerPath = [initialPosition];
   moveHistoryPolyline.setLatLngs(playerPath);
@@ -202,7 +206,7 @@ function spawnCache(lat: number, long: number) {
       .addEventListener("click", () => {
         if (coinCount > 0) {
           coinCount -= 1;
-          const collectedCoin = cache.coins.pop();
+          cache.coins.pop();
           popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
             coinCount.toString();
           popUpDiv.querySelector<HTMLSpanElement>(
@@ -210,9 +214,6 @@ function spawnCache(lat: number, long: number) {
           )!.innerHTML = updateCoinRepresentation();
           playerCoins += 1;
           updatePlayerCacheStats(cacheKey, coinCount);
-          console.log(
-            `Collected coin: ${gridPosition.i}:${gridPosition.j}#${collectedCoin?.serial}`,
-          );
         }
       });
     popUpDiv
@@ -231,9 +232,6 @@ function spawnCache(lat: number, long: number) {
             "#coinRepresentation",
           )!.innerHTML = updateCoinRepresentation();
           updatePlayerCacheStats(cacheKey, coinCount);
-          console.log(
-            `Deposited coin: ${gridPosition.i}:${gridPosition.j}#${newSerialValue}`,
-          );
         }
       });
 
@@ -362,9 +360,34 @@ function loadGameState(): void {
   }
 }
 
+function resetGameState(): void {
+  const playerConfirmation: string | null = prompt(
+    "Are you sure you would like to reset the game state? Type 'YES' to confirm.",
+  );
+  if (playerConfirmation === "YES") {
+    Object.keys(cacheStorage).forEach((key) => {
+      const cache = cacheStorage[key];
+      cache.coins.length = 0;
+      cache.coinCount = Math.floor(luck(key.split(",").toString()) * 10);
+      for (let n = 0; n < cache.coinCount; n++) {
+        cache.coins.push({ serial: n });
+      }
+    });
+
+    playerCoins = 0;
+    updatePlayerStatus();
+
+    playerPath = [playerMarker.getLatLng()];
+    moveHistoryPolyline.setLatLngs(playerPath);
+
+    localStorage.removeItem("gameState");
+  }
+}
+
 // MAIN FUNCTION CALLS
 addMovementButtonsFunctionality();
 addGeoLocationButton();
+addResetButton();
 generateCaches();
 loadGameState();
 
