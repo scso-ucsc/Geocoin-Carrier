@@ -5,6 +5,7 @@ import "./leafletWorkaround.ts"; //Fixes missing marker images
 import luck from "./luck.ts"; //Random number generator
 
 //Creating Constant Gameplay Variables
+const playerDelta = 0.0001;
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
@@ -74,6 +75,28 @@ const cacheFlyweightFactory = (() => {
 })();
 
 //FUNCTIONS --------------------
+function addMovementButtonsFunctionality(): void {
+  document
+    .querySelector("#north")
+    ?.addEventListener("click", () => movePlayer(0, playerDelta));
+  document
+    .querySelector("#south")
+    ?.addEventListener("click", () => movePlayer(0, -playerDelta));
+  document
+    .querySelector("#east")
+    ?.addEventListener("click", () => movePlayer(playerDelta, 0));
+  document
+    .querySelector("#west")
+    ?.addEventListener("click", () => movePlayer(-playerDelta, 0));
+}
+
+function movePlayer(deltaLong: number, deltaLat: number): void {
+  const currentLatLong = playerMarker.getLatLng();
+  const newLat = currentLatLong.lat + deltaLat;
+  const newLong = currentLatLong.lng + deltaLong;
+  playerMarker.setLatLng([newLat, newLong]);
+}
+
 function spawnCache(lat: number, long: number) {
   const gridPosition = convertToGrid(lat, long);
   const cacheKey = `${gridPosition.i},${gridPosition.j}`;
@@ -183,5 +206,6 @@ function convertToGrid(lat: number, long: number) {
   return { i, j };
 }
 
-//MAIN FUNCTION CALLS
+// MAIN FUNCTION CALLS
+addMovementButtonsFunctionality();
 generateCaches();
