@@ -189,9 +189,17 @@ function spawnCache(lat: number, long: number) {
     const cache = cacheStorage[cacheKey];
     let coinCount = cache.coinCount;
 
+    const onCoinIdentifierClick = (e: MouseEvent) => {
+      e.preventDefault();
+      map.setView(bounds.getCenter(), GAMEPLAY_ZOOM_LEVEL);
+    };
+
     const updateCoinRepresentation = () => {
       return cache.coins
-        .map((coin) => `${gridPosition.i}:${gridPosition.j}#${coin.serial}`)
+        .map(
+          (coin) =>
+            `<a href="#" class="coin-link" data-key="${cacheKey}">${gridPosition.i}:${gridPosition.j}#${coin.serial}</a>`,
+        )
         .join(", ");
     };
 
@@ -201,6 +209,11 @@ function spawnCache(lat: number, long: number) {
     <strong><br><br>Coin Identifiers: </strong><br><span id="coinRepresentation">${updateCoinRepresentation()}</span></div>
       <button id="collect">Collect</button>
       <button id="deposit">Deposit</button>`;
+    popUpDiv
+      .querySelectorAll<HTMLAnchorElement>(".coin-link")
+      .forEach((link) => {
+        link.addEventListener("click", onCoinIdentifierClick);
+      });
     popUpDiv
       .querySelector<HTMLButtonElement>("#collect")!
       .addEventListener("click", () => {
