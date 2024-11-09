@@ -95,6 +95,7 @@ function movePlayer(deltaLong: number, deltaLat: number): void {
   const newLat = currentLatLong.lat + deltaLat;
   const newLong = currentLatLong.lng + deltaLong;
   playerMarker.setLatLng([newLat, newLong]);
+  updateVisibleCaches(newLat, newLong);
 }
 
 function spawnCache(lat: number, long: number) {
@@ -184,15 +185,74 @@ function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
   statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
 }
 
+function updateVisibleCaches(playerLat: number, playerLong: number): void {
+  map.eachLayer(function (layer: leaflet.Layer) {
+    if (layer instanceof leaflet.Rectangle) {
+      map.removeLayer(layer);
+    }
+  });
+  const boundOffset = NEIGHBORHOOD_SIZE * TILE_DEGREES;
+  const northBound = playerLat + boundOffset;
+  const southBound = playerLat - boundOffset;
+  const eastBound = playerLong + boundOffset;
+  const westBound = playerLong - boundOffset;
+
+  const gridBaseLat = Math.round(
+    (playerLat - OAKES_CLASSROOM.lat) / TILE_DEGREES,
+  );
+  const gridBaseLong = Math.round(
+    (playerLong - OAKES_CLASSROOM.lng) / TILE_DEGREES,
+  );
+
+  for (
+    let i = gridBaseLat - NEIGHBORHOOD_SIZE;
+    i <= gridBaseLat + NEIGHBORHOOD_SIZE;
+    i++
+  ) {
+    for (
+      let j = gridBaseLong - NEIGHBORHOOD_SIZE;
+      j <= gridBaseLong + NEIGHBORHOOD_SIZE;
+      j++
+    ) {
+      const lat = OAKES_CLASSROOM.lat + i * TILE_DEGREES;
+      const long = OAKES_CLASSROOM.lng + j * TILE_DEGREES;
+      const cacheKey = `${i},${j}`;
+      if (
+        !cacheStorage[cacheKey] &&
+        cacheFlyweightFactory.shouldSpawnCache(i, j)
+      ) {
+        spawnCache(lat, long);
+      }
+
+      if (
+        lat <= northBound &&
+        lat >= southBound &&
+        long <= eastBound &&
+        long >= westBound
+      ) {
+        const cache = cacheStorage[cacheKey];
+        if (cache) {
+          const bounds = cacheFlyweightFactory.calculateBounds(lat, long, 0, 0);
+          const rect = leaflet.rectangle(bounds);
+          rect.addTo(map);
+          rect.bindPopup(() => {
+            return `<div>Cache at <strong>${cacheKey}</strong>. Coins: ${cache.coinCount}.</div>`;
+          });
+        }
+      }
+    }
+  }
+}
+
 function generateCaches(): void {
   const baseLat = OAKES_CLASSROOM.lat;
   const baseLong = OAKES_CLASSROOM.lng;
 
   for (let i = -NEIGHBORHOOD_SIZE; i <= NEIGHBORHOOD_SIZE; i++) {
     for (let j = -NEIGHBORHOOD_SIZE; j <= NEIGHBORHOOD_SIZE; j++) {
+      const lat = baseLat + i * TILE_DEGREES;
+      const long = baseLong + j * TILE_DEGREES;
       if (cacheFlyweightFactory.shouldSpawnCache(i, j)) {
-        const lat = baseLat + i * TILE_DEGREES;
-        const long = baseLong + j * TILE_DEGREES;
         spawnCache(lat, long);
       }
     }
