@@ -4,6 +4,11 @@ import "./style.css";
 import "./leafletWorkaround.ts"; //Fixes missing marker images
 import luck from "./luck.ts"; //Random number generator
 
+//Interfaces
+interface CacheMemento {
+  [key: string]: { coinCount: number; coins: { serial: number }[] };
+}
+
 //Creating Constant Gameplay Variables
 const playerDelta = 0.0001;
 const GAMEPLAY_ZOOM_LEVEL = 19;
@@ -94,6 +99,9 @@ function movePlayer(deltaLong: number, deltaLat: number): void {
   const currentLatLong = playerMarker.getLatLng();
   const newLat = currentLatLong.lat + deltaLat;
   const newLong = currentLatLong.lng + deltaLong;
+
+  createCacheMemento(); //Saving Current Cache State
+
   playerMarker.setLatLng([newLat, newLong]);
   updateVisibleCaches(newLat, newLong);
 }
@@ -264,6 +272,10 @@ function convertToGrid(lat: number, long: number) {
   const i = Math.floor(lat * scaleFactor);
   const j = Math.floor(long * scaleFactor);
   return { i, j };
+}
+
+function createCacheMemento() {
+  return JSON.parse(JSON.stringify(cacheStorage));
 }
 
 // MAIN FUNCTION CALLS
