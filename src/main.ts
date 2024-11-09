@@ -46,6 +46,16 @@ playerMarker.addTo(map);
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "Player Coins: 0";
 
+//Creating Variables for Player Movement History
+const initialPosition = playerMarker.getLatLng();
+let playerPath: leaflet.LatLng[] = [initialPosition];
+const moveHistoryPolyline = leaflet
+  .polyline(playerPath, { color: "blue" })
+  .addTo(map);
+
+//GEOLOCATION TOGGLE
+let geolocationWatchID: number | null = null;
+
 //FLYWEIGHT PATTERN
 const cacheFlyweightFactory = (() => {
   const cacheProperties = {
@@ -95,6 +105,38 @@ function addMovementButtonsFunctionality(): void {
     ?.addEventListener("click", () => movePlayer(-playerDelta, 0));
 }
 
+function addGeoLocationButton(): void {
+  const sensorButton = document.getElementById("sensor");
+  if (sensorButton) {
+    sensorButton.addEventListener("click", () => {
+      if (geolocationWatchID !== null) {
+        navigator.geolocation.clearWatch(geolocationWatchID);
+        geolocationWatchID = null;
+      } else {
+        if (navigator.geolocation) {
+          geolocationWatchID = navigator.geolocation.watchPosition(
+            (position) => {
+              movePlayerToPosition(
+                position.coords.latitude,
+                position.coords.longitude,
+              );
+            },
+            (error) => console.error("Error watching geolocation", error),
+            { enableHighAccuracy: true },
+          );
+        } else {
+          console.log("Geolocation Not Supported");
+        }
+      }
+    });
+  }
+}
+
+function initializePath(initialPosition: leaflet.LatLng): void {
+  playerPath = [initialPosition];
+  moveHistoryPolyline.setLatLngs(playerPath);
+}
+
 function movePlayer(deltaLong: number, deltaLat: number): void {
   const currentLatLong = playerMarker.getLatLng();
   const newLat = currentLatLong.lat + deltaLat;
@@ -102,8 +144,19 @@ function movePlayer(deltaLong: number, deltaLat: number): void {
 
   createCacheMemento(); //Saving Current Cache State
 
+  playerPath.push([newLat, newLong]);
+  moveHistoryPolyline.setLatLngs(playerPath);
+
   playerMarker.setLatLng([newLat, newLong]);
   updateVisibleCaches(newLat, newLong);
+}
+
+function movePlayerToPosition(lat: number, long: number): void {
+  playerPath.push([lat, long]);
+  moveHistoryPolyline.setLatLngs(playerPath);
+
+  playerMarker.setLatLng([lat, long]);
+  updateVisibleCaches(lat, long);
 }
 
 function spawnCache(lat: number, long: number) {
@@ -193,6 +246,10 @@ function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
   statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
 }
 
+function updatePlayerStatus(): void {
+  statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
+}
+
 function updateVisibleCaches(playerLat: number, playerLong: number): void {
   map.eachLayer(function (layer: leaflet.Layer) {
     if (layer instanceof leaflet.Rectangle) {
@@ -278,6 +335,38 @@ function createCacheMemento() {
   return JSON.parse(JSON.stringify(cacheStorage));
 }
 
+function saveGameState(): void {
+  const gameState = {
+    cacheStorage,
+    playerPosition: playerMarker.getLatLng(),
+    playerCoins,
+  };
+  localStorage.setItem("gameState", JSON.stringify(gameState));
+}
+
+function loadGameState(): void {
+  const gameStateString = localStorage.getItem("gameState");
+  if (gameStateString) {
+    try {
+      const gameState = JSON.parse(gameStateString);
+      Object.assign(cacheStorage, gameState.cacheStorage);
+      playerCoins = gameState.playerCoins;
+      const playerPosition = gameState.playerPosition;
+      playerMarker.setLatLng([playerPosition.lat, playerPosition.lng]);
+      initializePath(playerMarker.getLatLng());
+      updateVisibleCaches(playerPosition.lat, playerPosition.lng);
+      updatePlayerStatus();
+    } catch (error) {
+      console.error("Failed to load game state:", error);
+    }
+  }
+}
+
 // MAIN FUNCTION CALLS
 addMovementButtonsFunctionality();
+addGeoLocationButton();
 generateCaches();
+loadGameState();
+
+//WINDOW FUNCTIONS
+globalThis.addEventListener("beforeunload", saveGameState);
