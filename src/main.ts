@@ -56,39 +56,6 @@ const moveHistoryPolyline = leaflet
 //GEOLOCATION TOGGLE
 let geolocationWatchID: number | null = null;
 
-//FLYWEIGHT PATTERN
-const cacheFlyweightFactory = (() => {
-  const cacheProperties = {
-    tileDegrees: TILE_DEGREES,
-    spawnProbability: CACHE_SPAWN_PROBABILITY,
-  };
-
-  function calculateBounds(
-    latBase: number,
-    longBase: number,
-    i: number,
-    j: number,
-  ) {
-    const lat1 = latBase + i * cacheProperties.tileDegrees;
-    const lat2 = latBase + (i + 1) * cacheProperties.tileDegrees;
-    const long1 = longBase + j * cacheProperties.tileDegrees;
-    const long2 = longBase + (j + 1) * cacheProperties.tileDegrees;
-
-    const bounds = leaflet.latLngBounds([
-      [lat1, long1],
-      [lat2, long2],
-    ]);
-
-    return bounds;
-  }
-
-  function shouldSpawnCache(i: number, j: number): boolean {
-    return luck([i, j].toString()) < cacheProperties.spawnProbability;
-  }
-
-  return { calculateBounds, shouldSpawnCache };
-})();
-
 //FUNCTIONS --------------------
 function startGame(): void {
   const gameConfig = {
@@ -99,42 +66,117 @@ function startGame(): void {
     rng: luck,
   };
 
-  addMovementButtonsFunctionality(gameConfig);
-  addGeoLocationButton(gameConfig);
+  const cacheFlyweightFactory = createFlyweightFactory(gameConfig);
+
+  addMovementButtonsFunctionality(gameConfig, cacheFlyweightFactory);
+  addGeoLocationButton(gameConfig, cacheFlyweightFactory);
   addResetButton();
-  generateCaches(gameConfig);
+  generateCaches(gameConfig, cacheFlyweightFactory);
   updateVisibleCaches(
     playerMarker.getLatLng().lat,
     playerMarker.getLatLng().lng,
     gameConfig,
+    cacheFlyweightFactory,
   );
-  loadGameState(gameConfig);
+  loadGameState(gameConfig, cacheFlyweightFactory);
 }
 
-function addMovementButtonsFunctionality(config: {
+function createFlyweightFactory(config: {
   tileDegrees: number;
-  gameplayZoomLevel: number;
-  rng: (luck: string) => number;
-}): void {
+  spawnProbability: number;
+}): {
+  calculateBounds: (
+    latBase: number,
+    longBase: number,
+    i: number,
+    j: number,
+  ) => leaflet.LatLngBounds | null;
+  shouldSpawnCache: (i: number, j: number) => boolean;
+} {
+  function calculateBounds(
+    latBase: number,
+    longBase: number,
+    i: number,
+    j: number,
+  ): leaflet.LatLngBounds | null {
+    const lat1 = latBase + i * config.tileDegrees;
+    const lat2 = latBase + (i + 1) * config.tileDegrees;
+    const long1 = longBase + j * config.tileDegrees;
+    const long2 = longBase + (j + 1) * config.tileDegrees;
+
+    const bounds = leaflet.latLngBounds([
+      [lat1, long1],
+      [lat2, long2],
+    ]);
+
+    return bounds;
+  }
+
+  function shouldSpawnCache(i: number, j: number): boolean {
+    return luck([i, j].toString()) < config.spawnProbability;
+  }
+
+  return { calculateBounds, shouldSpawnCache };
+}
+
+function addMovementButtonsFunctionality(
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
+): void {
   document
     .querySelector("#north")
-    ?.addEventListener("click", () => movePlayer(0, playerDelta, config));
+    ?.addEventListener(
+      "click",
+      () => movePlayer(0, playerDelta, config, cacheFlyweightFactory),
+    );
   document
     .querySelector("#south")
-    ?.addEventListener("click", () => movePlayer(0, -playerDelta, config));
+    ?.addEventListener(
+      "click",
+      () => movePlayer(0, -playerDelta, config, cacheFlyweightFactory),
+    );
   document
     .querySelector("#east")
-    ?.addEventListener("click", () => movePlayer(playerDelta, 0, config));
+    ?.addEventListener(
+      "click",
+      () => movePlayer(playerDelta, 0, config, cacheFlyweightFactory),
+    );
   document
     .querySelector("#west")
-    ?.addEventListener("click", () => movePlayer(-playerDelta, 0, config));
+    ?.addEventListener(
+      "click",
+      () => movePlayer(-playerDelta, 0, config, cacheFlyweightFactory),
+    );
 }
 
-function addGeoLocationButton(config: {
-  tileDegrees: number;
-  gameplayZoomLevel: number;
-  rng: (luck: string) => number;
-}): void {
+function addGeoLocationButton(
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
+): void {
   const sensorButton = document.getElementById("sensor");
   if (sensorButton) {
     sensorButton.addEventListener("click", () => {
@@ -149,6 +191,7 @@ function addGeoLocationButton(config: {
                 position.coords.latitude,
                 position.coords.longitude,
                 config,
+                cacheFlyweightFactory,
               );
             },
             (error) => console.error("Error watching geolocation", error),
@@ -179,6 +222,15 @@ function movePlayer(
     gameplayZoomLevel: number;
     rng: (luck: string) => number;
   },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
 ): void {
   const currentLatLong = playerMarker.getLatLng();
   const newLat = currentLatLong.lat + deltaLat;
@@ -190,7 +242,7 @@ function movePlayer(
   moveHistoryPolyline.setLatLngs(playerPath);
 
   playerMarker.setLatLng([newLat, newLong]);
-  updateVisibleCaches(newLat, newLong, config);
+  updateVisibleCaches(newLat, newLong, config, cacheFlyweightFactory);
 }
 
 function movePlayerToPosition(
@@ -201,12 +253,21 @@ function movePlayerToPosition(
     gameplayZoomLevel: number;
     rng: (luck: string) => number;
   },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
 ): void {
   playerPath.push([lat, long]);
   moveHistoryPolyline.setLatLngs(playerPath);
 
   playerMarker.setLatLng([lat, long]);
-  updateVisibleCaches(lat, long, config);
+  updateVisibleCaches(lat, long, config, cacheFlyweightFactory);
 }
 
 function spawnCache(
@@ -214,6 +275,15 @@ function spawnCache(
   long: number,
   config: {
     rng: (key: string) => number;
+  },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
   },
 ): void {
   const { rng } = config;
@@ -323,6 +393,15 @@ function updateVisibleCaches(
     gameplayZoomLevel: number;
     rng: (key: string) => number;
   },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
 ): void {
   const { tileDegrees } = config;
 
@@ -361,7 +440,7 @@ function updateVisibleCaches(
         !cacheStorage[cacheKey] &&
         cacheFlyweightFactory.shouldSpawnCache(i, j)
       ) {
-        spawnCache(lat, long, config);
+        spawnCache(lat, long, config, cacheFlyweightFactory);
       }
 
       if (
@@ -384,12 +463,23 @@ function updateVisibleCaches(
   }
 }
 
-function generateCaches(config: {
-  center: leaflet.LatLng;
-  tileDegrees: number;
-  rng: (key: string) => number;
-  gameplayZoomLevel: number;
-}): void {
+function generateCaches(
+  config: {
+    center: leaflet.LatLng;
+    tileDegrees: number;
+    rng: (key: string) => number;
+    gameplayZoomLevel: number;
+  },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
+): void {
   const baseLat = config.center.lat;
   const baseLong = config.center.lng;
 
@@ -398,7 +488,7 @@ function generateCaches(config: {
       const lat = baseLat + i * config.tileDegrees;
       const long = baseLong + j * config.tileDegrees;
       if (cacheFlyweightFactory.shouldSpawnCache(i, j)) {
-        spawnCache(lat, long, config);
+        spawnCache(lat, long, config, cacheFlyweightFactory);
       }
     }
   }
@@ -424,11 +514,22 @@ function saveGameState(): void {
   localStorage.setItem("gameState", JSON.stringify(gameState));
 }
 
-function loadGameState(config: {
-  tileDegrees: number;
-  gameplayZoomLevel: number;
-  rng: (luck: string) => number;
-}): void {
+function loadGameState(
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  },
+  cacheFlyweightFactory: {
+    calculateBounds: (
+      latBase: number,
+      longBase: number,
+      i: number,
+      j: number,
+    ) => leaflet.LatLngBounds | null;
+    shouldSpawnCache: (i: number, j: number) => boolean;
+  },
+): void {
   const gameStateString = localStorage.getItem("gameState");
   if (gameStateString) {
     try {
@@ -438,7 +539,12 @@ function loadGameState(config: {
       const playerPosition = gameState.playerPosition;
       playerMarker.setLatLng([playerPosition.lat, playerPosition.lng]);
       initializePath(playerMarker.getLatLng());
-      updateVisibleCaches(playerPosition.lat, playerPosition.lng, config);
+      updateVisibleCaches(
+        playerPosition.lat,
+        playerPosition.lng,
+        config,
+        cacheFlyweightFactory,
+      );
       updatePlayerStatus();
     } catch (error) {
       console.error("Failed to load game state:", error);
