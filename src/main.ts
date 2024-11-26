@@ -57,7 +57,16 @@ const moveHistoryPolyline = leaflet
 let geolocationWatchID: number | null = null;
 
 //FUNCTIONS --------------------
-function startGame(): void {
+function initializeGameConfig(): {
+  gameConfig: {
+    center: leaflet.LatLng;
+    tileDegrees: number;
+    spawnProbability: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  };
+  cacheFlyweightFactory: ReturnType<typeof createFlyweightFactory>;
+} {
   const gameConfig = {
     center: OAKES_CLASSROOM,
     tileDegrees: TILE_DEGREES,
@@ -68,17 +77,58 @@ function startGame(): void {
 
   const cacheFlyweightFactory = createFlyweightFactory(gameConfig);
 
+  return { gameConfig, cacheFlyweightFactory };
+}
+
+function initializeEventListeners(
+  gameConfig: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (key: string) => number;
+  },
+  cacheFlyweightFactory: ReturnType<typeof createFlyweightFactory>,
+): void {
   addMovementButtonsFunctionality(gameConfig, cacheFlyweightFactory);
   addGeoLocationButton(gameConfig, cacheFlyweightFactory);
   addResetButton();
+}
+
+function initializeCaches(
+  playerLat: number,
+  playerLong: number,
+  gameConfig: {
+    center: leaflet.LatLng;
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (key: string) => number;
+  },
+  cacheFlyweightFactory: ReturnType<typeof createFlyweightFactory>,
+): void {
   generateCaches(gameConfig, cacheFlyweightFactory);
-  updateVisibleCaches(
+  updateVisibleCaches(playerLat, playerLong, gameConfig, cacheFlyweightFactory);
+}
+
+function restoreGameState(
+  gameConfig: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (key: string) => number;
+  },
+  cacheFlyweightFactory: ReturnType<typeof createFlyweightFactory>,
+): void {
+  loadGameState(gameConfig, cacheFlyweightFactory);
+}
+
+function startGame(): void {
+  const { gameConfig, cacheFlyweightFactory } = initializeGameConfig();
+  initializeEventListeners(gameConfig, cacheFlyweightFactory);
+  initializeCaches(
     playerMarker.getLatLng().lat,
     playerMarker.getLatLng().lng,
     gameConfig,
     cacheFlyweightFactory,
   );
-  loadGameState(gameConfig, cacheFlyweightFactory);
+  restoreGameState(gameConfig, cacheFlyweightFactory);
 }
 
 function createFlyweightFactory(config: {
@@ -270,6 +320,96 @@ function movePlayerToPosition(
   updateVisibleCaches(lat, long, config, cacheFlyweightFactory);
 }
 
+function ensureCacheExists(
+  lat: number,
+  long: number,
+  config: { rng: (key: string) => number },
+): { gridPosition: { i: number; j: number }; cacheKey: string } {
+  const gridPosition = convertToGrid(lat, long);
+  const cacheKey = `${gridPosition.i},${gridPosition.j}`;
+
+  if (!cacheStorage[cacheKey]) {
+    const initialCoinCount = Math.floor(
+      config.rng([gridPosition.i, gridPosition.j, "initialValue"].toString()) *
+        10,
+    );
+    cacheStorage[cacheKey] = { coinCount: initialCoinCount, coins: [] };
+    for (let n = 0; n < initialCoinCount; n++) {
+      cacheStorage[cacheKey].coins.push({ serial: n });
+    }
+  }
+
+  return { gridPosition, cacheKey };
+}
+
+function createPopUpForCache(
+  cacheKey: string,
+  gridPosition: { i: number; j: number },
+  bounds: leaflet.latLngBounds,
+): HTMLElement {
+  const cache = cacheStorage[cacheKey];
+  let coinCount = cache.coinCount;
+
+  const onCoinIdentifierClick = (e: MouseEvent) => {
+    e.preventDefault();
+    map.setView(bounds.getCenter(), GAMEPLAY_ZOOM_LEVEL);
+  };
+
+  const updateCoinRepresentation = () => {
+    return cache.coins
+      .map(
+        (coin) =>
+          `<a href="#" class="coin-link" data-key="${cacheKey}">${gridPosition.i}:${gridPosition.j}#${coin.serial}</a>`,
+      )
+      .join(", ");
+  };
+
+  const popUpDiv = document.createElement("div");
+  popUpDiv.innerHTML =
+    `<div>Cache at <strong>"${gridPosition.i}, ${gridPosition.j}"</strong>. <strong><br>Coins: </strong><span id="value">${coinCount}</span>.
+    <strong><br><br>Coin Identifiers: </strong><br><span id="coinRepresentation">${updateCoinRepresentation()}</span></div>
+      <button id="collect">Collect</button>
+      <button id="deposit">Deposit</button>`;
+  popUpDiv.querySelectorAll<HTMLAnchorElement>(".coin-link").forEach((link) => {
+    link.addEventListener("click", onCoinIdentifierClick);
+  });
+  popUpDiv
+    .querySelector<HTMLButtonElement>("#collect")!
+    .addEventListener("click", () => {
+      if (coinCount > 0) {
+        coinCount -= 1;
+        cache.coins.pop();
+        popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinCount
+          .toString();
+        popUpDiv.querySelector<HTMLSpanElement>(
+          "#coinRepresentation",
+        )!.innerHTML = updateCoinRepresentation();
+        playerCoins += 1;
+        updatePlayerCacheStats(cacheKey, coinCount);
+      }
+    });
+  popUpDiv
+    .querySelector<HTMLButtonElement>("#deposit")!
+    .addEventListener("click", () => {
+      if (playerCoins > 0) {
+        coinCount += 1;
+        playerCoins -= 1;
+        const newSerialValue = cache.coins.length > 0
+          ? cache.coins[cache.coins.length - 1].serial + 1
+          : 0;
+        cache.coins.push({ serial: newSerialValue });
+        popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = coinCount
+          .toString();
+        popUpDiv.querySelector<HTMLSpanElement>(
+          "#coinRepresentation",
+        )!.innerHTML = updateCoinRepresentation();
+        updatePlayerCacheStats(cacheKey, coinCount);
+      }
+    });
+
+  return popUpDiv;
+}
+
 function spawnCache(
   lat: number,
   long: number,
@@ -286,20 +426,7 @@ function spawnCache(
     shouldSpawnCache: (i: number, j: number) => boolean;
   },
 ): void {
-  const { rng } = config;
-
-  const gridPosition = convertToGrid(lat, long);
-  const cacheKey = `${gridPosition.i},${gridPosition.j}`;
-
-  if (!cacheStorage[cacheKey]) {
-    const initialCoinCount = Math.floor(
-      rng([gridPosition.i, gridPosition.j, "initialValue"].toString()) * 10,
-    );
-    cacheStorage[cacheKey] = { coinCount: initialCoinCount, coins: [] };
-    for (let n = 0; n < initialCoinCount; n++) {
-      cacheStorage[cacheKey].coins.push({ serial: n });
-    }
-  }
+  const { gridPosition, cacheKey } = ensureCacheExists(lat, long, config);
 
   const bounds = cacheFlyweightFactory.calculateBounds(lat, long, 0, 0);
   if (bounds == null) {
@@ -309,71 +436,8 @@ function spawnCache(
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
 
-  rect.bindPopup(() => {
-    const cache = cacheStorage[cacheKey];
-    let coinCount = cache.coinCount;
-
-    const onCoinIdentifierClick = (e: MouseEvent) => {
-      e.preventDefault();
-      map.setView(bounds.getCenter(), GAMEPLAY_ZOOM_LEVEL);
-    };
-
-    const updateCoinRepresentation = () => {
-      return cache.coins
-        .map(
-          (coin) =>
-            `<a href="#" class="coin-link" data-key="${cacheKey}">${gridPosition.i}:${gridPosition.j}#${coin.serial}</a>`,
-        )
-        .join(", ");
-    };
-
-    const popUpDiv = document.createElement("div");
-    popUpDiv.innerHTML =
-      `<div>Cache at <strong>"${gridPosition.i}, ${gridPosition.j}"</strong>. <strong><br>Coins: </strong><span id="value">${coinCount}</span>.
-    <strong><br><br>Coin Identifiers: </strong><br><span id="coinRepresentation">${updateCoinRepresentation()}</span></div>
-      <button id="collect">Collect</button>
-      <button id="deposit">Deposit</button>`;
-    popUpDiv
-      .querySelectorAll<HTMLAnchorElement>(".coin-link")
-      .forEach((link) => {
-        link.addEventListener("click", onCoinIdentifierClick);
-      });
-    popUpDiv
-      .querySelector<HTMLButtonElement>("#collect")!
-      .addEventListener("click", () => {
-        if (coinCount > 0) {
-          coinCount -= 1;
-          cache.coins.pop();
-          popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinCount.toString();
-          popUpDiv.querySelector<HTMLSpanElement>(
-            "#coinRepresentation",
-          )!.innerHTML = updateCoinRepresentation();
-          playerCoins += 1;
-          updatePlayerCacheStats(cacheKey, coinCount);
-        }
-      });
-    popUpDiv
-      .querySelector<HTMLButtonElement>("#deposit")!
-      .addEventListener("click", () => {
-        if (playerCoins > 0) {
-          coinCount += 1;
-          playerCoins -= 1;
-          const newSerialValue = cache.coins.length > 0
-            ? cache.coins[cache.coins.length - 1].serial + 1
-            : 0;
-          cache.coins.push({ serial: newSerialValue });
-          popUpDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-            coinCount.toString();
-          popUpDiv.querySelector<HTMLSpanElement>(
-            "#coinRepresentation",
-          )!.innerHTML = updateCoinRepresentation();
-          updatePlayerCacheStats(cacheKey, coinCount);
-        }
-      });
-
-    return popUpDiv;
-  });
+  const popup = createPopUpForCache(cacheKey, gridPosition, bounds);
+  rect.bindPopup(popup);
 }
 
 function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
@@ -383,6 +447,61 @@ function updatePlayerCacheStats(cacheKey: string, coinCount: number): void {
 
 function updatePlayerStatus(): void {
   statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
+}
+
+function clearMapLayers(map: leaflet.Map): void {
+  map.eachLayer(function (layer: leaflet.Layer) {
+    if (layer instanceof leaflet.Rectangle) {
+      map.removeLayer(layer);
+    }
+  });
+}
+
+function calculateVisibleGrid(
+  playerLat: number,
+  playerLong: number,
+  config: { tileDegrees: number },
+): {
+  gridBaseLat: number;
+  gridBaseLong: number;
+  northBound: number;
+  southBound: number;
+  eastBound: number;
+  westBound: number;
+} {
+  const boundOffset = NEIGHBORHOOD_SIZE * config.tileDegrees;
+  const northBound = playerLat + boundOffset;
+  const southBound = playerLat - boundOffset;
+  const eastBound = playerLong + boundOffset;
+  const westBound = playerLong - boundOffset;
+
+  const gridBaseLat = Math.round(
+    (playerLat - OAKES_CLASSROOM.lat) / config.tileDegrees,
+  );
+  const gridBaseLong = Math.round(
+    (playerLong - OAKES_CLASSROOM.lng) / config.tileDegrees,
+  );
+
+  return {
+    gridBaseLat,
+    gridBaseLong,
+    northBound,
+    southBound,
+    eastBound,
+    westBound,
+  };
+}
+
+function addCacheToMap(
+  cacheKey: string,
+  cache: { coinCount: number },
+  bounds: leaflet.LatLngBounds,
+): void {
+  const rect = leaflet.rectangle(bounds);
+  rect.addTo(map);
+  rect.bindPopup(() => {
+    return `<div>Cache at <strong>${cacheKey}</strong>. Coins: ${cache.coinCount}.</div>`;
+  });
 }
 
 function updateVisibleCaches(
@@ -403,25 +522,15 @@ function updateVisibleCaches(
     shouldSpawnCache: (i: number, j: number) => boolean;
   },
 ): void {
-  const { tileDegrees } = config;
-
-  map.eachLayer(function (layer: leaflet.Layer) {
-    if (layer instanceof leaflet.Rectangle) {
-      map.removeLayer(layer);
-    }
-  });
-  const boundOffset = NEIGHBORHOOD_SIZE * tileDegrees;
-  const northBound = playerLat + boundOffset;
-  const southBound = playerLat - boundOffset;
-  const eastBound = playerLong + boundOffset;
-  const westBound = playerLong - boundOffset;
-
-  const gridBaseLat = Math.round(
-    (playerLat - OAKES_CLASSROOM.lat) / tileDegrees,
-  );
-  const gridBaseLong = Math.round(
-    (playerLong - OAKES_CLASSROOM.lng) / tileDegrees,
-  );
+  clearMapLayers(map);
+  const {
+    gridBaseLat,
+    gridBaseLong,
+    northBound,
+    southBound,
+    eastBound,
+    westBound,
+  } = calculateVisibleGrid(playerLat, playerLong, config);
 
   for (
     let i = gridBaseLat - NEIGHBORHOOD_SIZE;
@@ -433,8 +542,8 @@ function updateVisibleCaches(
       j <= gridBaseLong + NEIGHBORHOOD_SIZE;
       j++
     ) {
-      const lat = OAKES_CLASSROOM.lat + i * tileDegrees;
-      const long = OAKES_CLASSROOM.lng + j * tileDegrees;
+      const lat = OAKES_CLASSROOM.lat + i * config.tileDegrees;
+      const long = OAKES_CLASSROOM.lng + j * config.tileDegrees;
       const cacheKey = `${i},${j}`;
       if (
         !cacheStorage[cacheKey] &&
@@ -452,11 +561,9 @@ function updateVisibleCaches(
         const cache = cacheStorage[cacheKey];
         if (cache) {
           const bounds = cacheFlyweightFactory.calculateBounds(lat, long, 0, 0);
-          const rect = leaflet.rectangle(bounds);
-          rect.addTo(map);
-          rect.bindPopup(() => {
-            return `<div>Cache at <strong>${cacheKey}</strong>. Coins: ${cache.coinCount}.</div>`;
-          });
+          if (bounds) {
+            addCacheToMap(cacheKey, cache, bounds);
+          }
         }
       }
     }
