@@ -90,22 +90,51 @@ const cacheFlyweightFactory = (() => {
 })();
 
 //FUNCTIONS --------------------
-function addMovementButtonsFunctionality(): void {
-  document
-    .querySelector("#north")
-    ?.addEventListener("click", () => movePlayer(0, playerDelta));
-  document
-    .querySelector("#south")
-    ?.addEventListener("click", () => movePlayer(0, -playerDelta));
-  document
-    .querySelector("#east")
-    ?.addEventListener("click", () => movePlayer(playerDelta, 0));
-  document
-    .querySelector("#west")
-    ?.addEventListener("click", () => movePlayer(-playerDelta, 0));
+function startGame(): void {
+  const gameConfig = {
+    center: OAKES_CLASSROOM,
+    tileDegrees: TILE_DEGREES,
+    spawnProbability: CACHE_SPAWN_PROBABILITY,
+    gameplayZoomLevel: GAMEPLAY_ZOOM_LEVEL,
+    rng: luck,
+  };
+
+  addMovementButtonsFunctionality(gameConfig);
+  addGeoLocationButton(gameConfig);
+  addResetButton();
+  generateCaches(gameConfig);
+  updateVisibleCaches(
+    playerMarker.getLatLng().lat,
+    playerMarker.getLatLng().lng,
+    gameConfig,
+  );
+  loadGameState(gameConfig);
 }
 
-function addGeoLocationButton(): void {
+function addMovementButtonsFunctionality(config: {
+  tileDegrees: number;
+  gameplayZoomLevel: number;
+  rng: (luck: string) => number;
+}): void {
+  document
+    .querySelector("#north")
+    ?.addEventListener("click", () => movePlayer(0, playerDelta, config));
+  document
+    .querySelector("#south")
+    ?.addEventListener("click", () => movePlayer(0, -playerDelta, config));
+  document
+    .querySelector("#east")
+    ?.addEventListener("click", () => movePlayer(playerDelta, 0, config));
+  document
+    .querySelector("#west")
+    ?.addEventListener("click", () => movePlayer(-playerDelta, 0, config));
+}
+
+function addGeoLocationButton(config: {
+  tileDegrees: number;
+  gameplayZoomLevel: number;
+  rng: (luck: string) => number;
+}): void {
   const sensorButton = document.getElementById("sensor");
   if (sensorButton) {
     sensorButton.addEventListener("click", () => {
@@ -119,6 +148,7 @@ function addGeoLocationButton(): void {
               movePlayerToPosition(
                 position.coords.latitude,
                 position.coords.longitude,
+                config,
               );
             },
             (error) => console.error("Error watching geolocation", error),
@@ -141,7 +171,15 @@ function initializePath(initialPosition: leaflet.LatLng): void {
   moveHistoryPolyline.setLatLngs(playerPath);
 }
 
-function movePlayer(deltaLong: number, deltaLat: number): void {
+function movePlayer(
+  deltaLong: number,
+  deltaLat: number,
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  },
+): void {
   const currentLatLong = playerMarker.getLatLng();
   const newLat = currentLatLong.lat + deltaLat;
   const newLong = currentLatLong.lng + deltaLong;
@@ -152,24 +190,40 @@ function movePlayer(deltaLong: number, deltaLat: number): void {
   moveHistoryPolyline.setLatLngs(playerPath);
 
   playerMarker.setLatLng([newLat, newLong]);
-  updateVisibleCaches(newLat, newLong);
+  updateVisibleCaches(newLat, newLong, config);
 }
 
-function movePlayerToPosition(lat: number, long: number): void {
+function movePlayerToPosition(
+  lat: number,
+  long: number,
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (luck: string) => number;
+  },
+): void {
   playerPath.push([lat, long]);
   moveHistoryPolyline.setLatLngs(playerPath);
 
   playerMarker.setLatLng([lat, long]);
-  updateVisibleCaches(lat, long);
+  updateVisibleCaches(lat, long, config);
 }
 
-function spawnCache(lat: number, long: number) {
+function spawnCache(
+  lat: number,
+  long: number,
+  config: {
+    rng: (key: string) => number;
+  },
+): void {
+  const { rng } = config;
+
   const gridPosition = convertToGrid(lat, long);
   const cacheKey = `${gridPosition.i},${gridPosition.j}`;
 
   if (!cacheStorage[cacheKey]) {
     const initialCoinCount = Math.floor(
-      luck([gridPosition.i, gridPosition.j, "initialValue"].toString()) * 10,
+      rng([gridPosition.i, gridPosition.j, "initialValue"].toString()) * 10,
     );
     cacheStorage[cacheKey] = { coinCount: initialCoinCount, coins: [] };
     for (let n = 0; n < initialCoinCount; n++) {
@@ -261,23 +315,33 @@ function updatePlayerStatus(): void {
   statusPanel.innerHTML = `Player Coins: ${playerCoins}`;
 }
 
-function updateVisibleCaches(playerLat: number, playerLong: number): void {
+function updateVisibleCaches(
+  playerLat: number,
+  playerLong: number,
+  config: {
+    tileDegrees: number;
+    gameplayZoomLevel: number;
+    rng: (key: string) => number;
+  },
+): void {
+  const { tileDegrees } = config;
+
   map.eachLayer(function (layer: leaflet.Layer) {
     if (layer instanceof leaflet.Rectangle) {
       map.removeLayer(layer);
     }
   });
-  const boundOffset = NEIGHBORHOOD_SIZE * TILE_DEGREES;
+  const boundOffset = NEIGHBORHOOD_SIZE * tileDegrees;
   const northBound = playerLat + boundOffset;
   const southBound = playerLat - boundOffset;
   const eastBound = playerLong + boundOffset;
   const westBound = playerLong - boundOffset;
 
   const gridBaseLat = Math.round(
-    (playerLat - OAKES_CLASSROOM.lat) / TILE_DEGREES,
+    (playerLat - OAKES_CLASSROOM.lat) / tileDegrees,
   );
   const gridBaseLong = Math.round(
-    (playerLong - OAKES_CLASSROOM.lng) / TILE_DEGREES,
+    (playerLong - OAKES_CLASSROOM.lng) / tileDegrees,
   );
 
   for (
@@ -290,14 +354,14 @@ function updateVisibleCaches(playerLat: number, playerLong: number): void {
       j <= gridBaseLong + NEIGHBORHOOD_SIZE;
       j++
     ) {
-      const lat = OAKES_CLASSROOM.lat + i * TILE_DEGREES;
-      const long = OAKES_CLASSROOM.lng + j * TILE_DEGREES;
+      const lat = OAKES_CLASSROOM.lat + i * tileDegrees;
+      const long = OAKES_CLASSROOM.lng + j * tileDegrees;
       const cacheKey = `${i},${j}`;
       if (
         !cacheStorage[cacheKey] &&
         cacheFlyweightFactory.shouldSpawnCache(i, j)
       ) {
-        spawnCache(lat, long);
+        spawnCache(lat, long, config);
       }
 
       if (
@@ -320,16 +384,21 @@ function updateVisibleCaches(playerLat: number, playerLong: number): void {
   }
 }
 
-function generateCaches(): void {
-  const baseLat = OAKES_CLASSROOM.lat;
-  const baseLong = OAKES_CLASSROOM.lng;
+function generateCaches(config: {
+  center: leaflet.LatLng;
+  tileDegrees: number;
+  rng: (key: string) => number;
+  gameplayZoomLevel: number;
+}): void {
+  const baseLat = config.center.lat;
+  const baseLong = config.center.lng;
 
   for (let i = -NEIGHBORHOOD_SIZE; i <= NEIGHBORHOOD_SIZE; i++) {
     for (let j = -NEIGHBORHOOD_SIZE; j <= NEIGHBORHOOD_SIZE; j++) {
-      const lat = baseLat + i * TILE_DEGREES;
-      const long = baseLong + j * TILE_DEGREES;
+      const lat = baseLat + i * config.tileDegrees;
+      const long = baseLong + j * config.tileDegrees;
       if (cacheFlyweightFactory.shouldSpawnCache(i, j)) {
-        spawnCache(lat, long);
+        spawnCache(lat, long, config);
       }
     }
   }
@@ -355,7 +424,11 @@ function saveGameState(): void {
   localStorage.setItem("gameState", JSON.stringify(gameState));
 }
 
-function loadGameState(): void {
+function loadGameState(config: {
+  tileDegrees: number;
+  gameplayZoomLevel: number;
+  rng: (luck: string) => number;
+}): void {
   const gameStateString = localStorage.getItem("gameState");
   if (gameStateString) {
     try {
@@ -365,7 +438,7 @@ function loadGameState(): void {
       const playerPosition = gameState.playerPosition;
       playerMarker.setLatLng([playerPosition.lat, playerPosition.lng]);
       initializePath(playerMarker.getLatLng());
-      updateVisibleCaches(playerPosition.lat, playerPosition.lng);
+      updateVisibleCaches(playerPosition.lat, playerPosition.lng, config);
       updatePlayerStatus();
     } catch (error) {
       console.error("Failed to load game state:", error);
@@ -398,11 +471,7 @@ function resetGameState(): void {
 }
 
 // MAIN FUNCTION CALLS
-addMovementButtonsFunctionality();
-addGeoLocationButton();
-addResetButton();
-generateCaches();
-loadGameState();
+startGame();
 
 //WINDOW FUNCTIONS
 globalThis.addEventListener("beforeunload", saveGameState);
